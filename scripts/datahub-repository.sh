@@ -18,7 +18,8 @@ Subcommands:
 Reads BOOMI_* from .env.
 EOF
 }
-[[ -z "${1:-}" || "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { usage; exit 0; }
+[[ -z "${1:-}" ]] && { usage; exit 0; }
+help_requested "$@"
 
 sub="$1"; shift
 

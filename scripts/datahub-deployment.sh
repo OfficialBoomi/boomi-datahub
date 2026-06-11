@@ -9,14 +9,17 @@ Usage: datahub-deployment.sh <subcommand> [args]
 
 Subcommands (Platform API except `list`):
   deploy <universe-id> <repository-id> --version <v>   --version is required
-  undeploy <repository-id> <universe-id>
+  undeploy <universe-id> <repository-id>
   status <universe-id> <deployment-id>
   list                                                  list deployed universes (Repository API)
+
+deploy and undeploy take the same argument order (<universe-id> first).
 
 Reads BOOMI_* from .env. `list` also reads DATAHUB_REPO_* from .env.
 EOF
 }
-[[ -z "${1:-}" || "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { usage; exit 0; }
+[[ -z "${1:-}" ]] && { usage; exit 0; }
+help_requested "$@"
 
 sub="$1"; shift
 
@@ -35,8 +38,8 @@ case "$sub" in
     datahub_api -X POST "$url"
     ;;
   undeploy)
-    [[ -z "${1:-}" || -z "${2:-}" ]] && { echo "Need <repository-id> <universe-id>" >&2; exit 1; }
-    datahub_api -X DELETE "$(datahub_platform_url "repositories/$1/universe/$2")"
+    [[ -z "${1:-}" || -z "${2:-}" ]] && { echo "Need <universe-id> <repository-id>" >&2; exit 1; }
+    datahub_api -X DELETE "$(datahub_platform_url "repositories/$2/universe/$1")"
     ;;
   status)
     [[ -z "${1:-}" || -z "${2:-}" ]] && { echo "Need <universe-id> <deployment-id>" >&2; exit 1; }

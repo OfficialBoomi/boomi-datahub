@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# DataHub Quarantine operations.
-# `query` uses Repository API; `get`/`approve`/`reject`/`delete` use Platform API.
+# DataHub Quarantine operations. query → Repository API; get/approve/reject/delete → Platform API.
 
 source "$(dirname "$0")/datahub-common.sh"
 
@@ -25,7 +24,8 @@ REFERENCE_UNKNOWN) are `delete`-only — `reject` returns HTTP 400 "not rejectab
 The fix is source-side: correct the payload and resubmit.
 EOF
 }
-[[ -z "${1:-}" || "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { usage; exit 0; }
+[[ -z "${1:-}" ]] && { usage; exit 0; }
+help_requested "$@"
 
 sub="$1"; shift
 
@@ -39,6 +39,7 @@ case "$sub" in
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --universe) uid="$2"; shift 2;;
+        -*) reject_flags "$1";;
         *) filter="$1"; shift;;
       esac
     done
@@ -57,16 +58,18 @@ case "$sub" in
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --universe) uid="$2"; shift 2;;
+        -*) reject_flags "$1";;
         *) positionals+=("$1"); shift;;
       esac
     done
-    set -- "${positionals[@]}"
+    set -- "${positionals[@]+"${positionals[@]}"}"
     [[ -z "$uid" || -z "${1:-}" ]] && { echo "Need --universe <uid> <transaction-id>" >&2; exit 1; }
     require_env DATAHUB_REPO_URI
     url="$(datahub_repo_url "$DATAHUB_REPO_URI" "universes/${uid}/quarantine/$1/reject")"
     datahub_api --repo-auth -X POST "$url"
     ;;
   get|approve|delete)
+    reject_flags "$@"
     [[ -z "${1:-}" || -z "${2:-}" || -z "${3:-}" ]] && { echo "Need <repository-id> <universe-id> <transaction-id>" >&2; exit 1; }
     p="repositories/$1/universes/$2/quarantine/$3"
     case "$sub" in

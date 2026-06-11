@@ -1,31 +1,5 @@
 #!/usr/bin/env bash
-# DataHub REST client connection bootstrap.
-#
-# Why this exists: DataHub's auth token (DATAHUB_REPO_AUTH_TOKEN in .env) is
-# needed in two places — our datahub-* CLIs read it from .env to hit the
-# Repository API directly, AND Boomi integration processes that talk to
-# DataHub via the REST client need the same token configured on a Boomi
-# connection component. Without this script, the user maintains the same
-# credential in both .env and the Boomi GUI, and mirrors any rotation.
-#
-# Alternatives considered and rejected:
-#   - Ask the user to manually configure the GUI connection — real friction.
-#   - JWT-based REST connections — would let us drop DATAHUB_REPO_* from .env,
-#     but JWTs minted from BOOMI_* creds can hit any repo the account has
-#     access to, losing per-repo scoping (scratchpad #5c).
-#   - Generic .env templating in bc-integration's component-push — heavy
-#     philosophical shift, affects all of its connections, not just this one
-#     bridge.
-#
-# How it works: the auth token flows .env → bash subshell → curl stdin →
-# platform encrypted storage. It never enters agent context. The platform
-# auto-encrypts password-type fields on new Component create. See scratchpad
-# #5d on acceptable bridges between workspace .env and platform encrypted
-# storage.
-#
-# Trust note: the script's discipline (no echoes, no curl -v, sanitized
-# errors) is established by one-time human code review of this source.
-# Future invocations trust the file.
+# Bootstrap a Boomi REST client connection wired to .env DataHub creds.
 
 set +x  # defeat xtrace in calling shell
 
@@ -41,7 +15,8 @@ DataHub credentials (DATAHUB_REPO_URI / _USERNAME / _AUTH_TOKEN from .env).
 Prints the new component ID on success.
 EOF
 }
-[[ -z "${1:-}" || "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { usage; exit 0; }
+[[ -z "${1:-}" ]] && { usage; exit 0; }
+help_requested "$@"
 
 sub="$1"; shift
 case "$sub" in
@@ -60,10 +35,8 @@ require_env BOOMI_USERNAME BOOMI_API_TOKEN BOOMI_ACCOUNT_ID BOOMI_API_URL \
 
 url="${BOOMI_API_URL}/api/rest/v1/${BOOMI_ACCOUNT_ID}/Component"
 
-# Heredoc as stdin (not `cat | datahub_api`) so the function runs in the
-# current shell and RESPONSE_CODE / RESPONSE_BODY propagate back. Piping
-# into a function puts the function in a subshell and assignments are lost.
-datahub_api -X POST -H "Content-Type: application/xml" --data-binary @- "$url" <<XML
+# Heredoc stdin (not pipe) so RESPONSE_CODE/BODY propagate from the current shell.
+if ! datahub_api -X POST -H "Content-Type: application/xml" --data-binary @- "$url" <<XML
 <?xml version="1.0" encoding="UTF-8"?>
 <bns:Component xmlns:bns="http://api.platform.boomi.com/"
                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -120,9 +93,7 @@ datahub_api -X POST -H "Content-Type: application/xml" --data-binary @- "$url" <
   </bns:object>
 </bns:Component>
 XML
-
-if [[ -z "$RESPONSE_CODE" ]]; then
-  echo "ERROR: Component create did not return an HTTP code (network or invocation issue)." >&2
+then
   echo "  The component may have been created server-side anyway — check the Boomi UI for" >&2
   echo "  a component named '${name}' before retrying, to avoid creating a duplicate." >&2
   exit 1
@@ -133,8 +104,7 @@ if (( RESPONSE_CODE < 200 || RESPONSE_CODE >= 300 )); then
   exit 1
 fi
 
-# Extract componentId from the response root attribute. Do NOT print RESPONSE_BODY —
-# the full component XML includes username and other fields we shouldn't surface.
-component_id=$(echo "$RESPONSE_BODY" | grep -o 'componentId="[^"]*"' | head -1 | sed 's/componentId="//;s/"$//')
+# Don't print RESPONSE_BODY — it contains the username/password fields.
+component_id=$(echo "$RESPONSE_BODY" | grep -o 'componentId="[^"]*"' | head -1 | sed 's/componentId="//;s/"$//' || true)
 [[ -z "$component_id" ]] && { echo "ERROR: Component created but could not parse componentId from response" >&2; exit 1; }
 echo "$component_id"

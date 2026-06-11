@@ -14,12 +14,13 @@ Subcommands:
   publish <model-id> [--notes <text>]
   create <xml-file>
   update <model-id> <xml-file>
-  delete <model-id>
+  delete <model-id>                                              confirm with list or a second delete, not get (get returns 200 for deleted models)
 
 Reads BOOMI_* from .env.
 EOF
 }
-[[ -z "${1:-}" || "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { usage; exit 0; }
+[[ -z "${1:-}" ]] && { usage; exit 0; }
+help_requested "$@"
 
 sub="$1"; shift
 
@@ -67,6 +68,7 @@ case "$sub" in
     url="$(datahub_platform_url "models/${id}")"
     [[ -n "$qs" ]] && url+="?${qs}"
     datahub_api -H "Accept: ${accept}" "$url"
+    maybe_draft_hint "$id" "$draft"
     ;;
   create)
     [[ -z "${1:-}" || ! -f "$1" ]] && { echo "Need <xml-file>" >&2; exit 1; }
@@ -102,6 +104,7 @@ case "$sub" in
     url="$(datahub_platform_url "models/${id}")"
     [[ -n "$qs" ]] && url+="?${qs}"
     datahub_api -H "Accept: application/xml" "$url"
+    maybe_draft_hint "$id" "$draft"
     if (( RESPONSE_CODE < 200 || RESPONSE_CODE >= 300 )); then
       echo "ERROR: HTTP $RESPONSE_CODE" >&2
       echo "$RESPONSE_BODY" >&2

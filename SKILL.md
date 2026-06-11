@@ -7,36 +7,35 @@ description: Designs and operates Boomi DataHub master data — model and source
 
 ## Scope
 
-In: model design; source configuration; model lifecycle (Draft → Published → Deployed); quarantine triage; repository operations; golden-record CRUD (gated behind `ALLOW_GR_ACTIONS=true`).
+In: model design; source configuration; model lifecycle (Draft → Published → Deployed); quarantine triage; repository operations; golden-record CRUD.
 
 Out: building Boomi integration processes — those belong to `boomi-integration`. Integration processes that interact with DataHub (typically via the REST client) are `boomi-integration`'s territory; the REST client connection itself can be bootstrapped from this workspace's `.env` via `datahub-connection.sh bootstrap`.
 
 ## API surfaces
 
-| Surface | Base URL | Auth | Used for |
-|---|---|---|---|
-| **Platform API** | `${BOOMI_API_URL}/mdm/api/rest/v1/${BOOMI_ACCOUNT_ID}/…` | Basic with `BOOMI_TOKEN.${BOOMI_USERNAME}:${BOOMI_API_TOKEN}` | Account-level admin: models, sources, repositories, clouds, deployment |
-| **Repository API** | Per-repository base URL ending `/mdm` (from the repository's **Configure** tab) | Basic with `${BOOMI_ACCOUNT_ID}:<Hub Authentication Token>` or JWT | Per-repository: golden records, stewardship/quarantine, deployed-universe listing |
+DataHub exposes two API surfaces. **Always reach them through the CLI tools in § Scripts inventory — never hand-roll curl, URLs, or auth headers.** The scripts build the URLs, route to the correct surface, and read credentials from `.env`; constructing your own request is how the wrong-surface / wrong-auth mistakes happen.
 
-"Hub Cloud" is a runtime *cluster* that hosts repositories — not an API name.
+- **Platform API** — account-level admin: models, sources, repositories, clouds, deployment.
+- **Repository API** — per-repository: golden records, stewardship/quarantine, deployed-universe listing. It is **XML-only** on both request and response, so the payloads you author for these scripts are always XML (the Platform API speaks JSON on most reads).
 
-The most common mistake is hitting the wrong surface or carrying the wrong auth header across surfaces. The **Repository API is XML-only on both request and response sides** — POST bodies must be `Content-Type: application/xml`, and responses cannot be negotiated to JSON via the `Accept` header. The Platform API speaks JSON on most read endpoints.
+A **Hub Cloud** is the runtime host that holds repositories (along with their deployed models and golden records) — not an API name. Multiple repositories can live on one Hub Cloud.
 
 ## Credentials
 
-The `boomi-datahub` skill reads credentials from the workspace `.env` (see the plugin or skill `README.md` for the full contract). Sensitive values are never accepted as command-line arguments.
+The skill reads credentials from the workspace `.env`. Sensitive values are never accepted as command-line arguments — the scripts source them from `.env` directly.
 
 | Surface | `.env` keys |
 |---|---|
 | Platform API | `BOOMI_USERNAME`, `BOOMI_API_TOKEN`, `BOOMI_ACCOUNT_ID`, `BOOMI_API_URL` |
 | Repository API | `DATAHUB_REPO_URI`, `DATAHUB_REPO_USERNAME`, `DATAHUB_REPO_AUTH_TOKEN` |
-| Golden-record gate | `ALLOW_GR_ACTIONS=true` (required to enable any `datahub-golden-record.sh` sub-command, reads included) |
+
+Setting the Repository API keys is the opt-in for golden-record operations.
 
 ## Repository-scoped operations
 
-A repository is the unit of deployment. Models, sources, channels, staging areas, golden records, and quarantine all live inside a repository. A repository has its own base URL (e.g. `https://c01-usa-east.hub-test.boomi.com/mdm`). Repository operations target that URL; account-level admin uses the Platform API.
+A repository is the unit of deployment: models, sources, channels, staging areas, golden records, and quarantine all live inside one. Repository CLI tools target its base URL (e.g. `https://c01-usa-east.hub-test.boomi.com/mdm`); account-level admin uses the Platform API.
 
-**Cluster URL ≠ repository.** Multiple repositories can share a cluster host. What scopes a request to a specific repository is the auth pair — `DATAHUB_REPO_USERNAME` follows `<account-id>.<repo-token-id>` where the suffix is repo-specific, paired with that repository's Hub Authentication Token. Mismatch yields a confusing "universe does not exist" error: auth succeeded, but against a different repository's universe registry on the same cluster. **Never reuse an existing REST client connection (or any other DataHub-targeted artifact) on URL match alone** — verify with the user that the auth token targets the intended repository, or create a new connection wired to that repository's token.
+That base URL is a **Hub Cloud host**, shared by every repository on it — so the URL alone never identifies a repository. The auth pair does: `DATAHUB_REPO_USERNAME` is `<account-id>.<repo-token-id>` (suffix is repo-specific), paired with that repository's Hub Authentication Token. A URL match with the wrong token authenticates fine but lands on a different repository's universe registry — the confusing "universe does not exist" error. **Never reuse a REST client connection (or any DataHub artifact) on URL match alone** — confirm the token targets the intended repository, or wire a new connection to it - discuss with the user if in any doubt.
 
 ## Model lifecycle: Draft → Published → Deployed
 
@@ -50,9 +49,13 @@ Once deployed, the **universe ID equals the model ID** (`mdm:universeId` in the 
 
 The Platform API's `/models` resource exposes only `publicationStatus` (boolean — draft vs published). Deploy is a separate binding of a published model to a repository (via Deploy Universe) and is not a filter value on `/models`. Query deployment via the repository's universe-deployment status.
 
-**Source attachment** transitions `SOURCE_ATTACHMENT_REQUESTED` → `SOURCE_ATTACHED` → `ENABLE_INITIAL_LOAD_REQUESTED` → `INITIAL_LOAD_ENABLED` → `FINISH_INITIAL_LOAD_REQUESTED` → `INITIAL_LOAD_FINISHED`. The `*_REQUESTED` states are async. After `deploy`, calling `enable-initial-load` before the source reaches `SOURCE_ATTACHED` returns HTTP 400 "Source actual state cannot be null for state change" — poll `source.sh status` until `SOURCE_ATTACHED` (typically ~15s) before enabling initial load. Similarly, an upsert immediately following `enable-initial-load` may return HTTP 400 "not yet marked" before that state settles; retry succeeds (window is short, usually a single intervening roundtrip).
+**Draft-only models require `--draft`.** `model.sh get`/`pull` target the published version by default; a never-published model has none, so pass `--draft` — otherwise the API returns a misleading HTTP 400 "… is not a valid component ID".
 
-**Only one source at a time can be in initial-load.** Calling `enable-initial-load` against a second source while another is mid-load returns HTTP 400 "Cannot perform an initial load on more than one source at a time." Call `finish-initial-load` on the active source first — and observe that an immediate follow-up `enable-initial-load` on a second source has been seen to still hit the same 400 even after the finish call returned `<true/>`. Poll `source.sh status` until the active source reaches `INITIAL_LOAD_FINISHED` before enabling another source's initial load.
+**`get` is not a deletion liveness check.** After a successful `delete`, `model.sh get`/`pull` by ID still returns HTTP 200 with the full model XML — the Platform API retains the schema of deleted models and only excludes them from `list`. To confirm a model is deleted, use `list` (the model will be absent) or a second `delete` (returns "A model with ID … does not exist"). This applies to models only; source `get` on a deleted ID correctly returns HTTP 400.
+
+**Source attachment** transitions `SOURCE_ATTACHMENT_REQUESTED` → `SOURCE_ATTACHED` → `ENABLE_INITIAL_LOAD_REQUESTED` → `INITIAL_LOAD_ENABLED` → `FINISH_INITIAL_LOAD_REQUESTED` → `INITIAL_LOAD_FINISHED`. The `*_REQUESTED` states are async, so `enable-initial-load` and `finish-initial-load` **self-gate** — each blocks until the source reaches the state that makes the next step safe, so just run the lifecycle steps in order; no manual `source.sh status` polling is needed. `enable-initial-load` waits out the async `SOURCE_ATTACHMENT_REQUESTED` state before it acts and returns only once the source is `INITIAL_LOAD_ENABLED` (so a following upsert can't fire too early); it does two sequential waits, so it can block up to ~2 min. `finish-initial-load` returns only once the source is `INITIAL_LOAD_FINISHED` (a single wait, ≤60s).
+
+**Only one source at a time can be in initial-load.** Calling `enable-initial-load` against a second source while another is mid-load returns HTTP 400 "Cannot perform an initial load on more than one source at a time." Run `finish-initial-load` on the active source first; because it blocks until that source reaches `INITIAL_LOAD_FINISHED`, the next source's `enable-initial-load` is safe to call immediately after.
 
 ## Field types and structures
 
@@ -65,34 +68,90 @@ The Platform API's `/models` resource exposes only `publicationStatus` (boolean 
 
 **ENUMERATION** declares allowed values via child `<mdm:value>` elements (one per value).
 
-**REFERENCE** is a native cross-model link type. Attributes: `referenceUniverseId="<other-model-id>"`, `incomingReferenceIntegrity="true|false"`, `outgoingReferenceIntegrity="true|false"`. In batch upserts, the field element's text content is the *source-side* natural key of the target record (e.g. `<parentRef>parent-1</parentRef>`); the platform resolves it to the parent's golden-record GUID, and that's what subsequent query responses return. With `incomingReferenceIntegrity="true"`, an unresolvable target → 202 + silent quarantine with `cause=REFERENCE_UNKNOWN`. No STRING-by-convention workaround is needed.
+**REFERENCE** is a native cross-model link type. Attributes: `referenceUniverseId="<other-model-id>"`, `incomingReferenceIntegrity="true|false"`, `outgoingReferenceIntegrity="true|false"`. In batch upserts, the field element's text content is the *source-side* natural key of the target record (e.g. `<parentRef>parent-1</parentRef>`); the platform resolves it to the parent's golden-record GUID, and that's what subsequent query responses return. With `incomingReferenceIntegrity="true"`, an unresolvable target → 202 + silent quarantine with `cause=REFERENCE_UNKNOWN`. No STRING-by-convention workaround is needed. A `required="true"` REFERENCE field forces `outgoingReferenceIntegrity="true"` — the platform rejects model creation otherwise ("OutgoingReferenceIntegrity must be true when REFERENCE field … is required").
 
 **`id` is reserved at the model root.** Defining a field with `name="id"` at the root fails with "A user-defined 'id' field exists at the root level." The platform auto-provisions the entity id (the `<id>` value sent in batch upserts). Use a different name for your natural-key field (e.g. `recordId`).
 
-**Field groups** wrap related fields in `<mdm:fieldGroup name="..." uniqueId="..." repeatable="..." required="...">...</mdm:fieldGroup>` inside `<mdm:fields>`. The group's `name` becomes the wrapper element required in batch upserts (see below).
+**Field groups** wrap related fields in `<mdm:fieldGroup name="..." uniqueId="..." repeatable="..." required="...">...</mdm:fieldGroup>` inside `<mdm:fields>`. `repeatable` is locked at publish.
+
+- **Non-repeating** (`repeatable="false"`): one instance. The group's `name` is the wrapper element in batch upserts (`<address>…</address>`). Sending the subfields flat, or sending a second instance, → silent quarantine `PARSE_FAILURE`.
+- **Repeating** (`repeatable="true"`) is a **collection**. Model-create fails ("Missing required properties for collection field") unless the `<mdm:fieldGroup>` also carries `collectionTag`, `collectionUniqueId`, `identifyBy="KEY"`, and `collectionKeys` (the key field's `uniqueId`). In batch upserts and query responses it is **double-wrapped** — the `collectionTag` element once, wrapping repeated `name` elements:
+
+```xml
+<mdm:fieldGroup name="address" uniqueId="ADDRESS" repeatable="true" required="false"
+                collectionTag="addresses" collectionUniqueId="ADDRESSES" identifyBy="KEY" collectionKeys="CITY">
+    <mdm:field name="city" uniqueId="CITY" type="STRING" maxLength="100" repeatable="false" required="false"/>
+</mdm:fieldGroup>
+<!-- batch upsert / query: <addresses><address><city>…</city></address><address>…</address></addresses> -->
+```
+
+A **repeating single field** (`<mdm:field repeatable="true">`, no surrounding group) is the same collection mechanism: it needs `collectionTag`/`collectionUniqueId`/`identifyBy="KEY"` (but not `collectionKeys` — it keys on its own value) and double-wraps identically — `<phones><phone>v1</phone><phone>v2</phone></phones>`, the inner element carrying the scalar value. Either way, exceeding a non-repeating field/group's single instance → quarantine `PARSE_FAILURE`.
 
 **Model name normalization.** On create, the platform lowercases and strips non-alphanumerics from `<mdm:name>` (e.g. `MyModel` → `mymodel`, `Customer(Boomeus)` → `customerboomeus`). The normalized form is what batch upserts must use as the entity wrapper element. Re-fetch the model via `model.sh get` if uncertain.
+
+## Match rules
+
+A model needs at least one match rule to publish. Rules evaluate in document order; the first satisfied rule wins. Order most-restrictive first.
+
+A rule (`<mdm:matchRule topLevelOperator="AND|OR|NOT">`) holds any mix of:
+
+- `<mdm:simpleExpression>` — one `<mdm:fieldUniqueId>`; incoming-vs-existing equality on that field.
+- `<mdm:advancedExpression>` — `<mdm:ruleOperator>` `EQUALS` | `STRICT_EQUALS` (case-sensitive) | `IS_SIMILAR_TO` (fuzzy; add `<mdm:similarityAlgorithm>` and `<mdm:tolerance>`), then two inputs as in the sample below. `<mdm:inputType>` is `INCOMING` | `EXISTING` | `STATIC` (`STATIC` compares a literal `<mdm:value>`); the two inputs may name different fields.
+- `<mdm:expressionGroup operator="AND|OR|NOT">` — nests arbitrarily.
+
+Algorithms (exact literals): `Jaro-Winkler`, `Levenshtein`, `Bigram`, `Trigram`, `Soundex`. Tolerance 0.0–1.0 (`Soundex`: 0–4).
+
+```xml
+<mdm:matchRules>
+    <mdm:matchRule topLevelOperator="AND">
+        <mdm:simpleExpression><mdm:fieldUniqueId>EMAIL</mdm:fieldUniqueId></mdm:simpleExpression>
+    </mdm:matchRule>
+    <mdm:matchRule topLevelOperator="AND">
+        <mdm:simpleExpression><mdm:fieldUniqueId>POSTAL</mdm:fieldUniqueId></mdm:simpleExpression>
+        <mdm:advancedExpression>
+            <mdm:ruleOperator>IS_SIMILAR_TO</mdm:ruleOperator>
+            <mdm:similarityAlgorithm>Jaro-Winkler</mdm:similarityAlgorithm>
+            <mdm:tolerance>0.85</mdm:tolerance>
+            <mdm:firstInput>
+                <mdm:inputType>INCOMING</mdm:inputType>
+                <mdm:fieldUniqueId>LASTNAME</mdm:fieldUniqueId>
+            </mdm:firstInput>
+            <mdm:secondInput>
+                <mdm:inputType>EXISTING</mdm:inputType>
+                <mdm:fieldUniqueId>LASTNAME</mdm:fieldUniqueId>
+            </mdm:secondInput>
+        </mdm:advancedExpression>
+    </mdm:matchRule>
+</mdm:matchRules>
+```
+
+- **`create` checks shape; `publish` checks semantics.** A draft holds rules that publish rejects: fuzzy expressions not grouped with an exact expression, `NOT` with more than one child, fuzzy on a non-text field.
+- **`NOT` inverts its child** — a standalone NOT rule matches *dissimilar* records; only use it inside a group alongside positive expressions.
+- **Pulled rules are canonicalized** — same-field EQUALS collapses to a simpleExpression, omitted tolerance becomes `0.0`, `4` → `4.0`. Re-pull after create before editing.
+- **Tune with `datahub-golden-record.sh match`** — see § Match request for its diagnostic payload.
 
 ## Quarantine
 
 Failed ingests do not enter golden state. They land in quarantine with one of these causes:
 
-| Cause | When it fires |
-|---|---|
-| `PARSE_FAILURE` | XSD schema mismatch — wrong field names (using `uniqueId` instead of field `name`), missing field-group wrapper, unknown elements |
-| `FIELD_FORMAT_ERROR` | Field-level format violation — value not in an `ENUMERATION`'s allowed list, malformed `DATETIME`/`FLOAT`/`INTEGER`, etc. |
-| `REQUIRED_FIELD` | Missing one or more `required="true"` fields |
-| `REFERENCE_UNKNOWN` | A `REFERENCE` field's value doesn't resolve to a target record (when `incomingReferenceIntegrity="true"`) |
-| `POSSIBLE_DUPLICATE` | Match rules indicated this could be a duplicate of an existing golden record |
+| Cause | When it fires | Resolution |
+|---|---|---|
+| `PARSE_FAILURE` | XSD schema mismatch — wrong field names (`uniqueId` instead of field `name`), missing field-group wrapper, unknown elements | `delete`; fix payload, resubmit |
+| `FIELD_FORMAT_ERROR` | Value not in an `ENUMERATION`'s list, malformed `DATETIME`/`FLOAT`/`INTEGER`, etc. | `delete`; fix payload, resubmit |
+| `REQUIRED_FIELD` | Missing `required="true"` fields | `delete`; fix payload, resubmit |
+| `REFERENCE_UNKNOWN` | A `REFERENCE` value doesn't resolve (when `incomingReferenceIntegrity="true"`) | `delete`; fix payload, resubmit |
+| `POSSIBLE_DUPLICATE` | Match rules flagged a possible duplicate of an existing golden record | `reject` — discards the record, no merge |
 
-**Resolution is cause-dependent.** Only `POSSIBLE_DUPLICATE` (and other ambiguity-class causes) are `approve`-able — `approve` against a hard-fail cause returns HTTP 400 "not valid for approval." All hard-fail causes (`PARSE_FAILURE`, `FIELD_FORMAT_ERROR`, `REQUIRED_FIELD`, `REFERENCE_UNKNOWN`) are `delete`-only — `reject` returns HTTP 400 "not rejectable" for every one. The fix is source-side (correct the payload and resubmit); `delete` clears the existing quarantine entry. Match rules that produce excessive quarantine entries are a configuration problem, not a runtime fault.
+`approve` only works on entries quarantined by a source's manual-approval settings; against any other cause it returns HTTP 400. Excessive quarantine entries mean the match rules need work, not the runtime.
 
 ## Size limits
 
-- **Total model size**: 65,331 bytes
-- **Single row size**: 8,126 bytes
+A model has two byte budgets, both deployment-blocking (not warnings) and both excluding the id field, reference fields, and repeatable (collection) fields:
 
-UTF8MB4 encoding makes STRING fields expensive. ENUMERATION fields cost 1,020 bytes each. Repeatable fields move to child tables and don't count toward row size. Plan for these before publishing; they are deployment-blocking, not warnings.
+- **Total model size**: ~64 KB
+- **Single row size**: ~8 KB
+
+UTF8MB4 encoding makes STRING fields expensive (4 bytes/char), and each ENUMERATION field costs ~1 KB toward the model budget. Repeatable fields move to child tables, so they don't count toward either budget. Plan for these before publishing.
 
 ## `<skill-path>` resolution
 
@@ -118,7 +177,7 @@ All scripts support `--help` (or run with no args) for usage. They emit text (JS
 - `scripts/datahub-deployment.sh` — `deploy | undeploy | status | list`
 - `scripts/datahub-quarantine.sh` — `query | get | approve | reject | delete`
 - `scripts/datahub-golden-record.sh` — `query | get | history | meta | match | update | unlink | get-by-source`
-- `scripts/datahub-connection.sh` — `bootstrap` (creates a Boomi REST client connection wired to this workspace's DataHub creds, for use in integration processes). The stored base URL is the cluster host — integration paths must include the `/mdm/` prefix (e.g. `/mdm/universes/<id>/records`).
+- `scripts/datahub-connection.sh` — `bootstrap` (creates a Boomi REST client connection wired to this workspace's DataHub creds, for use in integration processes). The stored base URL is the Hub Cloud host — integration paths must include the `/mdm/` prefix (e.g. `/mdm/universes/<id>/records`).
 
 Repository API sub-commands take `--universe <id>` and read `DATAHUB_REPO_*` from `.env`.
 
@@ -204,7 +263,7 @@ Do NOT include `xmlns="..."` on `<RecordQueryRequest>` (HTTP 400 "unable to read
 
 ### Batch upsert — `datahub-golden-record.sh update`
 
-The `src` attribute is a configured contributing source. `<id>` is the source-side natural key — NOT the DataHub record ID. Response is `202 Accepted` with `Location` ending in the batch ID.
+The `src` attribute is a configured contributing source. `<id>` is the source-side natural key — NOT the DataHub record ID. Response is `202 Accepted` with `Location` ending in the batch ID. The source must already be update-capable: it completes the initial-load lifecycle (enable → upsert → finish; see § Model lifecycle) before its first upsert, or the batch returns HTTP 400 "not yet marked as one that can send updates".
 
 **Element naming rules:**
 - The entity wrapper element (e.g. `<contact>` below) must match the model's normalized `<mdm:name>` (see § Field types — lowercase, non-alphanumerics stripped). Wrong case fails synchronously with HTTP 400 "entity of unknown type".
@@ -234,7 +293,7 @@ The `src` attribute is a configured contributing source. `<id>` is the source-si
 
 ### Match request — `datahub-golden-record.sh match`
 
-Same `<batch>` body shape as upsert; hits `POST /match` instead of `POST /records`. Preview-only — returns the existing golden records each candidate would merge with under current match rules. No writes.
+Same `<batch>` body shape as upsert; hits `POST /match` instead of `POST /records`. Preview-only — no writes. Per candidate, a hit returns the matched golden record as `<duplicate>` plus a `matchRule` attribute naming the rule logic that fired; a miss returns only the `<entity>`. Fuzzy hits include `<fuzzyMatchDetails>` with the computed `matchStrength` vs the configured `threshold` — use it to tune tolerance against real data.
 
 ### `QuarantineQueryRequest` — `datahub-quarantine.sh query`
 

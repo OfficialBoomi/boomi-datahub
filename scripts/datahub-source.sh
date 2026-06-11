@@ -12,8 +12,8 @@ Subcommands:
   get  <source-id>
   pull <source-id> [--target-path <p>]   save XML to a working file (default active-development/mdm.source/<id>.xml)
   status              --repository <repo-id> --universe <uid> <source-id>
-  enable-initial-load --repository <repo-id> --universe <uid> <source-id>
-  finish-initial-load --repository <repo-id> --universe <uid> <source-id>
+  enable-initial-load --repository <repo-id> --universe <uid> <source-id>   (two sequential waits, blocks up to ~2 min; emits the final status JSON)
+  finish-initial-load --repository <repo-id> --universe <uid> <source-id>   (blocks ≤60s for the async transition; emits the final status JSON)
   create <xml-file>
   update <source-id> <xml-file>
   delete <source-id>
@@ -21,7 +21,8 @@ Subcommands:
 Reads BOOMI_* from .env.
 EOF
 }
-[[ -z "${1:-}" || "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { usage; exit 0; }
+[[ -z "${1:-}" ]] && { usage; exit 0; }
+help_requested "$@"
 
 sub="$1"; shift
 
@@ -61,16 +62,31 @@ case "$sub" in
       case "$1" in
         --repository) repo_id="$2"; shift 2;;
         --universe) universe_id="$2"; shift 2;;
+        -*) reject_flags "$1";;
         *) remaining+=("$1"); shift;;
       esac
     done
-    set -- "${remaining[@]}"
+    set -- "${remaining[@]+"${remaining[@]}"}"
     [[ -z "$repo_id" || -z "$universe_id" || -z "${1:-}" ]] && { echo "Need --repository <repo-id> --universe <uid> <source-id>" >&2; exit 1; }
     base="repositories/${repo_id}/universes/${universe_id}/sources/$1"
+    status_url="$(datahub_platform_url "${base}/status")"
     case "$sub" in
-      status)              datahub_api -H "Accept: application/json" "$(datahub_platform_url "${base}/status")" ;;
-      enable-initial-load) datahub_api -X POST "$(datahub_platform_url "${base}/enableInitialLoad")" ;;
-      finish-initial-load) datahub_api -X POST "$(datahub_platform_url "${base}/finishInitialLoad")" ;;
+      status)              datahub_api -H "Accept: application/json" "$status_url" ;;
+      enable-initial-load)
+        # Wait out async attach, POST, then wait until enabled.
+        wait_while_state "$status_url" SOURCE_ATTACHMENT_REQUESTED || exit 1
+        datahub_api -X POST "$(datahub_platform_url "${base}/enableInitialLoad")"
+        (( RESPONSE_CODE < 200 || RESPONSE_CODE >= 300 )) && { echo "ERROR: HTTP $RESPONSE_CODE" >&2; echo "$RESPONSE_BODY" >&2; exit 1; }
+        wait_for_state "$status_url" INITIAL_LOAD_ENABLED || exit 1
+        echo "$RESPONSE_BODY"; exit 0
+        ;;
+      finish-initial-load)
+        # POST, then wait until finished (one-at-a-time lock).
+        datahub_api -X POST "$(datahub_platform_url "${base}/finishInitialLoad")"
+        (( RESPONSE_CODE < 200 || RESPONSE_CODE >= 300 )) && { echo "ERROR: HTTP $RESPONSE_CODE" >&2; echo "$RESPONSE_BODY" >&2; exit 1; }
+        wait_for_state "$status_url" INITIAL_LOAD_FINISHED || exit 1
+        echo "$RESPONSE_BODY"; exit 0
+        ;;
     esac
     ;;
   create)
