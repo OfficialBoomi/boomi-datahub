@@ -130,6 +130,81 @@ Algorithms (exact literals): `Jaro-Winkler`, `Levenshtein`, `Bigram`, `Trigram`,
 - **Pulled rules are canonicalized** — same-field EQUALS collapses to a simpleExpression, omitted tolerance becomes `0.0`, `4` → `4.0`. Re-pull after create before editing.
 - **Tune with `datahub-golden-record.sh match`** — see § Match request for its diagnostic payload.
 
+## Tags
+
+A tag classifies golden records by a business rule. A model's tags are optional (`<mdm:tags/>` is valid); the source `sendFilter` below can reference a tag by name to gate a source's outbound channel. Each `<mdm:tag>` in the top-level `<mdm:tags>` block wraps a `<mdm:businessRule>` of keyed inputs + nested conditions:
+
+```xml
+<mdm:tags>
+    <mdm:tag name="Customer">
+        <mdm:businessRule name="Customer">
+            <mdm:inputs>
+                <mdm:input key="1" alias="Stage"    fieldUniqueId="STAGE"    type="Field"/>
+                <mdm:input key="2" alias="Category" fieldUniqueId="CATEGORY" type="Field"/>
+            </mdm:inputs>
+            <mdm:conditions topLevelOperator="OR">
+                <mdm:conditionGroup operator="AND">
+                    <mdm:condition operator="EQUAL">
+                        <mdm:firstInput  type="Field"  key="1"/>
+                        <mdm:secondInput type="Static" value="Active" key="0"/>
+                    </mdm:condition>
+                    <mdm:condition operator="IS_NOT_EMPTY">
+                        <mdm:firstInput type="Field" key="2"/>
+                    </mdm:condition>
+                </mdm:conditionGroup>
+            </mdm:conditions>
+        </mdm:businessRule>
+    </mdm:tag>
+</mdm:tags>
+```
+
+- **Omit `id` on create** (platform generates a GUID; `pull` to capture it); a supplied `id` is honored on update. Empty `<mdm:tags/>` removes all tags.
+- Conditions reference inputs by `key` (need not be contiguous); `<mdm:conditionGroup operator="AND|OR">` nests arbitrarily under `<mdm:conditions topLevelOperator="AND|OR">`. Binary operators need `<mdm:secondInput>` (`type="Field" key="N"` or `type="Static" value="..." key="0"`); empty-checks take `firstInput` only.
+- Operators: `EQUAL`, `NOT_EQUAL`, `LESS_THAN`, `GREATER_THAN`, `LESS_OR_EQUAL`, `GREATER_OR_EQUAL`, `CONTAINS`, `NOT_CONTAINS`, `STARTS_WITH`, `IS_EMPTY`, `IS_NOT_EMPTY`. Note the short `*_OR_EQUAL` (not `*_THAN_OR_EQUAL`) and `NOT_CONTAINS` (not `DOES_NOT_CONTAIN`).
+
+### Outbound gating — `sendFilter`
+
+A source's `<mdm:outbound>` references a tag by **`name`** to gate which records publish on its channel:
+
+```xml
+<mdm:sendFilter scope="All">
+    <mdm:tags><mdm:tag name="Customer"/></mdm:tags>
+</mdm:sendFilter>
+```
+
+- `scope` is `All` or `Creates`. Multiple tags allowed; `id` is optional (only `name` is required).
+- The `name` must resolve to a defined tag (else HTTP 400 "… does not exist in the model") — define the tag first.
+
+### Tag input functions
+
+A tag input can be a function that transforms a field. The input wraps `<mdm:function>`, which maps fields as parameters and declares its outputs:
+
+```xml
+<mdm:input key="3" alias="String Split" type="Function">
+    <mdm:function type="StringSplit" splitBy="Delimiter" delimiter="@">
+        <mdm:inputs><mdm:input name="Original String" uniqueId="EMAIL"/></mdm:inputs>
+        <mdm:outputs><mdm:output name="out1"/><mdm:output name="out2"/></mdm:outputs>
+    </mdm:function>
+</mdm:input>
+```
+
+- Each function `<mdm:input>` `uniqueId` must be a non-empty, valid field `uniqueId`; `uniqueId=""` is rejected. Multi-output functions declare `<mdm:outputs>` with named `<mdm:output>` children.
+- `type` tokens differ from the UI label and aren't derivable from it (e.g. *Right Character Trim* is `RightTrim`). By category:
+    - **String:** `LeftTrim`, `RightTrim`, `WhiteSpaceTrim`, `StringAppend`, `StringPrepend`, `StringConcat` (`delimiter`, `fixToLength`), `StringReplace`, `StringRemove`, `StringToLower`, `StringToUpper`, `StringSplit` (`splitBy`, `delimiter`)
+    - **Numeric:** `MathAbsoluteValue`, `MathAdd`, `MathDivide`, `MathCeiling`, `MathFloor`, `MathSetPrecision`, `NumberFormat`, `RunningTotal`, `Sum`, `Count`, `LineItemIncrement`, `SequentialValue`
+    - **Date:** `DateFormat`, `GetCurrentDate` (no inputs)
+- A condition tests a single-output function's result with a bare reference — `<mdm:firstInput type="Function" key="N"/>`, no output attribute. A `StringSplit` output is testable only when it is the function's **only** declared output — reference it with `outputFieldName="<output name>"`; with two or more declared outputs the condition is rejected on `update`. To test multiple segments, use one single-output `StringSplit` input per segment.
+
+**Platform API known issues — halt and raise with the user; never work around silently:**
+
+If this instruction remains in the skill the defect has not yet been resolved and this section remains critical. Boomi is aware of these issues and a fix is in progress; no support ticket is needed. You do not need to proactively raise them to the user unless their project or model is actively affected.
+
+- The API accepts both `MathSubtract` and `MathMultiply` but stores and executes them incorrectly — a rule authored as one function can be stored as a different one. **Never** author these.
+- For the same reason, treat `MathSubtract` and `LeftTrim` tag functions in any pulled model as suspect, even when UI-authored.
+- A pulled model may contain a condition on a multi-output `StringSplit`. Pushing that model back is rejected. Such tags must be edited in the UI, or restructured to single-output `StringSplit` inputs — never delete or restructure the user's condition without their explicit sign-off.
+
+These configurations are niche, but if you encounter any of the above situations — STOP and raise it with the user.
+
 ## Quarantine
 
 Failed ingests do not enter golden state. They land in quarantine with one of these causes:
