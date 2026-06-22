@@ -42,7 +42,7 @@ That base URL is a **Hub Cloud host**, shared by every repository on it — so t
 | State | Mutable? | What freezes |
 |---|---|---|
 | Draft | Yes — fields, types, repeatability, match rules can all change | Nothing |
-| Published | Schema-frozen — field types and repeatability are locked | Type changes after publish require a new version |
+| Published | Partly — new fields can be added (the update lands in a new draft to republish) | Type and repeatability of **existing** fields are locked; adding new fields is not |
 | Deployed | Runtime-bound — attached to a repository, ingesting and merging data | Undeploy is required before structural changes propagate |
 
 Once deployed, the **universe ID equals the model ID** (`mdm:universeId` in the deploy response is the same GUID as the model's `mdm:id`). The deployment ID is a separate value. Scripts that take `<universe-id>` should be given the model ID.

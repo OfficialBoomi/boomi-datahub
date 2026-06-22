@@ -71,7 +71,8 @@ case "$sub" in
     maybe_draft_hint "$id" "$draft"
     ;;
   create)
-    [[ -z "${1:-}" || ! -f "$1" ]] && { echo "Need <xml-file>" >&2; exit 1; }
+    [[ -z "${1:-}" ]] && { echo "Need <xml-file>" >&2; exit 1; }
+    [[ ! -f "$1"   ]] && { echo "File not found: $1" >&2; exit 1; }
     url="$(datahub_platform_url "models")"
     datahub_api -X POST -H "Content-Type: application/xml" --data-binary "@$1" "$url"
     ;;
@@ -120,6 +121,8 @@ case "$sub" in
     id="$1"; shift
     notes=""
     [[ "${1:-}" == "--notes" ]] && { notes="$2"; shift 2; }
+    # Entity-escape notes for XML interpolation; & first so produced entities aren't re-escaped.
+    notes="${notes//&/&amp;}"; notes="${notes//</&lt;}"; notes="${notes//>/&gt;}"
     url="$(datahub_platform_url "models/${id}/publish")"
     body="<mdm:PublishModelRequest xmlns:mdm=\"http://mdm.api.platform.boomi.com/\"><mdm:notes>${notes}</mdm:notes></mdm:PublishModelRequest>"
     datahub_api -X POST -H "Content-Type: application/xml" --data-binary "$body" "$url"
