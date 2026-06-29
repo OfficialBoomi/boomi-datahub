@@ -40,9 +40,12 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${positionals[@]+"${positionals[@]}"}"
 
+# Validate in the main shell: repo_url() runs as $(...), where an exit would only kill
+# the subshell, leaving datahub_api to run with a blank URL (B14). All subs need both.
+require_env DATAHUB_REPO_URI
+[[ -z "$uid" ]] && { echo "Need --universe <id>" >&2; exit 1; }
+
 repo_url() {
-  require_env DATAHUB_REPO_URI
-  [[ -z "$uid" ]] && { echo "Need --universe <id>" >&2; exit 1; }
   datahub_repo_url "$DATAHUB_REPO_URI" "universes/${uid}/$1"
 }
 
