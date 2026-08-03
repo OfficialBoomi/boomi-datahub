@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bootstrap a Boomi REST client connection wired to .env DataHub creds.
+# Bootstrap a Boomi REST client connection wired to .env Data Hub creds.
 
 set +x  # defeat xtrace in calling shell
 
@@ -11,7 +11,7 @@ usage() {
 Usage: datahub-connection.sh bootstrap <name> <folder-id>
 
 Creates a Boomi REST client connection component wired to this workspace's
-DataHub credentials (DATAHUB_REPO_URI / _USERNAME / _AUTH_TOKEN from .env).
+Data Hub credentials (DATAHUB_REPO_URI / _USERNAME / _AUTH_TOKEN from .env).
 Prints the new component ID on success.
 EOF
 }

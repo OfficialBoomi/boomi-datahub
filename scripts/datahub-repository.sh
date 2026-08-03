@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DataHub Repository operations (Platform API).
+# Data Hub Repository operations (Platform API).
 
 source "$(dirname "$0")/datahub-common.sh"
 

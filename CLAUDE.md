@@ -10,7 +10,7 @@ Notes for developers working on this skill.
 
 ## API surface reference
 
-Boomi help documentation for DataHub APIs lives under `Master Data Hub/REST APIs/`. Filename prefixes signal which API surface a given operation belongs to:
+Boomi help documentation for Data Hub APIs lives under `Master Data Hub/REST APIs/`. Filename prefixes signal which API surface a given operation belongs to:
 
 - `hub-...` — Platform API operations (account-level admin: models, sources, repositories admin, clouds, deployment)
 - `r-mdm-...` — Repository API operations (per-repository data ops: golden records, quarantine, channels, batches, staging)

@@ -1,6 +1,6 @@
 # boomi-datahub
 
-A Boomi Companion skill for Boomi DataHub (master data management).
+A Boomi Companion skill for Boomi Data Hub (master data management).
 
 > **Important:** Boomi Companion is a publicly available developer offering, not an officially supported Boomi product. It is provided as-is and is not covered by Boomi support agreements or SLAs. Boomi curates and maintains this tool on a best-effort basis — treat it as a self-service resource. Boomi reserves the right to modify or discontinue it at any time without notice.
 

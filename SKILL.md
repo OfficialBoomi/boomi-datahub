@@ -1,6 +1,6 @@
 ---
 name: boomi-datahub
-description: Designs and operates Boomi DataHub master data — model and source design, deployment lifecycle, quarantine triage, and golden-record CRUD — when the user works with Boomi DataHub (MDM) configuration or stewardship. Pairs nicely with the boomi-integration skill.
+description: Designs and operates Boomi Data Hub master data — model and source design, deployment lifecycle, quarantine triage, and golden-record CRUD — when the user works with Boomi Data Hub (MDM) configuration or stewardship. Pairs nicely with the boomi-integration skill.
 ---
 
 # boomi-datahub
@@ -9,11 +9,11 @@ description: Designs and operates Boomi DataHub master data — model and source
 
 In: model design; source configuration; model lifecycle (Draft → Published → Deployed); quarantine triage; repository operations; golden-record CRUD.
 
-Out: building Boomi integration processes — those belong to `boomi-integration`. Integration processes that interact with DataHub (typically via the REST client) are `boomi-integration`'s territory; the REST client connection itself can be bootstrapped from this workspace's `.env` via `datahub-connection.sh bootstrap`.
+Out: building Boomi integration processes — those belong to `boomi-integration`. Integration processes that interact with Data Hub (typically via the REST client) are `boomi-integration`'s territory; the REST client connection itself can be bootstrapped from this workspace's `.env` via `datahub-connection.sh bootstrap`.
 
 ## API surfaces
 
-DataHub exposes two API surfaces. **Always reach them through the CLI tools in § Scripts inventory — never hand-roll curl, URLs, or auth headers.** The scripts build the URLs, route to the correct surface, and read credentials from `.env`; constructing your own request is how the wrong-surface / wrong-auth mistakes happen.
+Data Hub exposes two API surfaces. **Always reach them through the CLI tools in § Scripts inventory — never hand-roll curl, URLs, or auth headers.** The scripts build the URLs, route to the correct surface, and read credentials from `.env`; constructing your own request is how the wrong-surface / wrong-auth mistakes happen.
 
 - **Platform API** — account-level admin: models, sources, repositories, clouds, deployment.
 - **Repository API** — per-repository: golden records, stewardship/quarantine, deployed-universe listing. It is **XML-only** on both request and response, so the payloads you author for these scripts are always XML (the Platform API speaks JSON on most reads).
@@ -35,7 +35,7 @@ Setting the Repository API keys is the opt-in for golden-record operations.
 
 A repository is the unit of deployment: models, sources, channels, staging areas, golden records, and quarantine all live inside one. Repository CLI tools target its base URL (e.g. `https://c01-usa-east.hub-test.boomi.com/mdm`); account-level admin uses the Platform API.
 
-That base URL is a **Hub Cloud host**, shared by every repository on it — so the URL alone never identifies a repository. The auth pair does: `DATAHUB_REPO_USERNAME` is `<account-id>.<repo-token-id>` (suffix is repo-specific), paired with that repository's Hub Authentication Token. A URL match with the wrong token authenticates fine but lands on a different repository's universe registry — the confusing "universe does not exist" error. **Never reuse a REST client connection (or any DataHub artifact) on URL match alone** — confirm the token targets the intended repository, or wire a new connection to it - discuss with the user if in any doubt.
+That base URL is a **Hub Cloud host**, shared by every repository on it — so the URL alone never identifies a repository. The auth pair does: `DATAHUB_REPO_USERNAME` is `<account-id>.<repo-token-id>` (suffix is repo-specific), paired with that repository's Hub Authentication Token. A URL match with the wrong token authenticates fine but lands on a different repository's universe registry — the confusing "universe does not exist" error. **Never reuse a REST client connection (or any Data Hub artifact) on URL match alone** — confirm the token targets the intended repository, or wire a new connection to it - discuss with the user if in any doubt.
 
 ## Model lifecycle: Draft → Published → Deployed
 
@@ -252,7 +252,7 @@ All scripts support `--help` (or run with no args) for usage. They emit text (JS
 - `scripts/datahub-deployment.sh` — `deploy | undeploy | status | list`
 - `scripts/datahub-quarantine.sh` — `query | get | approve | reject | delete`
 - `scripts/datahub-golden-record.sh` — `query | get | history | meta | match | update | unlink | get-by-source`
-- `scripts/datahub-connection.sh` — `bootstrap` (creates a Boomi REST client connection wired to this workspace's DataHub creds, for use in integration processes). The stored base URL is the Hub Cloud host — integration paths must include the `/mdm/` prefix (e.g. `/mdm/universes/<id>/records`).
+- `scripts/datahub-connection.sh` — `bootstrap` (creates a Boomi REST client connection wired to this workspace's Data Hub creds, for use in integration processes). The stored base URL is the Hub Cloud host — integration paths must include the `/mdm/` prefix (e.g. `/mdm/universes/<id>/records`).
 
 Repository API sub-commands take `--universe <id>` and read `DATAHUB_REPO_*` from `.env`.
 
@@ -338,7 +338,7 @@ Do NOT include `xmlns="..."` on `<RecordQueryRequest>` (HTTP 400 "unable to read
 
 ### Batch upsert — `datahub-golden-record.sh update`
 
-The `src` attribute is a configured contributing source. `<id>` is the source-side natural key — NOT the DataHub record ID. Response is `202 Accepted` with `Location` ending in the batch ID. The source must already be update-capable: it completes the initial-load lifecycle (enable → upsert → finish; see § Model lifecycle) before its first upsert, or the batch returns HTTP 400 "not yet marked as one that can send updates".
+The `src` attribute is a configured contributing source. `<id>` is the source-side natural key — NOT the Data Hub record ID. Response is `202 Accepted` with `Location` ending in the batch ID. The source must already be update-capable: it completes the initial-load lifecycle (enable → upsert → finish; see § Model lifecycle) before its first upsert, or the batch returns HTTP 400 "not yet marked as one that can send updates".
 
 **Element naming rules:**
 - The entity wrapper element (e.g. `<contact>` below) must match the model's normalized `<mdm:name>` (see § Field types — lowercase, non-alphanumerics stripped). Wrong case fails synchronously with HTTP 400 "entity of unknown type".

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DataHub Golden Record operations (all Repository API).
+# Data Hub Golden Record operations (all Repository API).
 
 source "$(dirname "$0")/datahub-common.sh"
 

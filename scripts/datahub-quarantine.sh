@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# DataHub Quarantine operations. query → Repository API; get/approve/reject/delete → Platform API.
+# Data Hub Quarantine operations. query → Repository API; get/approve/reject/delete → Platform API.
 
 source "$(dirname "$0")/datahub-common.sh"
 
