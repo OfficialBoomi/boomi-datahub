@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Bootstrap a Boomi REST client connection wired to .env Data Hub creds.
 
-set +x  # defeat xtrace in calling shell
+# The response echoes back the repo credentials; this script can't be safely traced.
+set +x
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/datahub-common.sh"
@@ -35,8 +36,10 @@ require_env BOOMI_USERNAME BOOMI_API_TOKEN BOOMI_ACCOUNT_ID BOOMI_API_URL \
 
 url="${BOOMI_API_URL}/api/rest/v1/${BOOMI_ACCOUNT_ID}/Component"
 
-# Heredoc stdin (not pipe) so RESPONSE_CODE/BODY propagate from the current shell.
-if ! datahub_api -X POST -H "Content-Type: application/xml" --data-binary @- "$url" <<XML
+# Body via tempfile, not stdin — datahub_api reserves stdin for the curl auth config.
+body_file="$(mktemp)"
+trap 'rm -f "$body_file"' EXIT
+cat > "$body_file" <<XML
 <?xml version="1.0" encoding="UTF-8"?>
 <bns:Component xmlns:bns="http://api.platform.boomi.com/"
                xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -93,7 +96,8 @@ if ! datahub_api -X POST -H "Content-Type: application/xml" --data-binary @- "$u
   </bns:object>
 </bns:Component>
 XML
-then
+
+if ! datahub_api -X POST -H "Content-Type: application/xml" --data-binary "@${body_file}" "$url"; then
   echo "  The component may have been created server-side anyway — check the Boomi UI for" >&2
   echo "  a component named '${name}' before retrying, to avoid creating a duplicate." >&2
   exit 1

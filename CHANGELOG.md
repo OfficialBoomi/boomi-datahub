@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.8
+
+- Keep credentials off the command line
+- Keep credentials out of child process environments
+- Keep credentials out of shell traces
+- Stop `.env` from overriding the skill's User-Agent header
+
+
 ## 0.2.7
 
 - Ship `CHANGELOG.md` inside the skill directory

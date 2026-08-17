@@ -7,22 +7,36 @@ set -euo pipefail
 
 load_env() {
   local env_file=".env"
-  if [[ -f "$env_file" ]]; then
-    set -a
-    source "$env_file"
-    set +a
-  else
+  if [[ ! -f "$env_file" ]]; then
     echo "ERROR: .env file not found in $(pwd)" >&2
     exit 1
   fi
+  # No set -a: .env values are read in-shell, never handed to child processes.
+  # Trace off across the source: xtrace echoes every .env assignment, values included.
+  local _xtrace_enabled=0
+  case $- in *x*) _xtrace_enabled=1 ;; esac
+  set +x
+  source "$env_file"
+  if (( _xtrace_enabled )); then set -x; fi
+  _set_user_agent   # .env must not override the header
+}
+
+# True if the named variable is non-empty. The one place in the skill that expands a
+# variable by name: ${!name} puts the value into a traced command, so xtrace is fenced here.
+var_is_set() {
+  local _xtrace_enabled=0
+  case $- in *x*) _xtrace_enabled=1 ;; esac
+  set +x
+  local rc=0
+  [[ -n "${!1:-}" ]] || rc=1
+  if (( _xtrace_enabled )); then set -x; fi
+  return $rc
 }
 
 require_env() {
   local missing=()
   for var in "$@"; do
-    if [[ -z "${!var:-}" ]]; then
-      missing+=("$var")
-    fi
+    var_is_set "$var" || missing+=("$var")
   done
   if [[ ${#missing[@]} -gt 0 ]]; then
     echo "ERROR: Missing required environment variables: ${missing[*]}" >&2
@@ -70,7 +84,13 @@ _skill_version() {
 
 # --- Constants ---
 
-DATAHUB_USER_AGENT="boomi-companion/boomi-datahub/$(_skill_version)"
+# Skill name is a literal — standalone installs may rename the directory.
+# A function because load_env re-calls it after sourcing .env, so the
+# User-Agent cannot be poisoned.
+_set_user_agent() {
+  DATAHUB_USER_AGENT="boomi-companion/boomi-datahub/$(_skill_version)"
+}
+_set_user_agent
 
 # --- URL builders ---
 
@@ -89,6 +109,20 @@ datahub_repo_url() {
 }
 
 # --- API helpers ---
+
+# Emits a curl config file on stdout for `curl -K -`, keeping credentials out of argv.
+# Usage: curl_cfg user "u:p" header "Authorization: Bearer t" | curl -K - ...
+curl_cfg() {
+  (( $# % 2 == 0 )) || { echo "ERROR: curl_cfg needs directive/value pairs" >&2; return 1; }
+  local val
+  while [[ $# -gt 1 ]]; do
+    val="$2"
+    val="${val//\\/\\\\}"
+    val="${val//\"/\\\"}"
+    printf '%s = "%s"\n' "$1" "$val"
+    shift 2
+  done
+}
 
 # Sets RESPONSE_BODY and RESPONSE_CODE. --repo-auth uses DATAHUB_REPO_* creds, else Platform API.
 RESPONSE_BODY=""
@@ -116,19 +150,20 @@ datahub_api() {
   # Run curl without errexit so connection failures return, not abort.
   local rc
   set +e
-  RESPONSE_CODE=$(curl -s $ssl_flag \
-    --max-time "${BOOMI_TIMEOUT:-60}" \
-    -A "$DATAHUB_USER_AGENT" \
-    -u "$userpass" \
-    -o "$tmpfile" -w "%{http_code}" \
-    "$@")
+  RESPONSE_CODE=$(curl_cfg user "$userpass" \
+    | curl -s $ssl_flag \
+        --max-time "${BOOMI_TIMEOUT:-60}" \
+        -A "$DATAHUB_USER_AGENT" \
+        -K - \
+        -o "$tmpfile" -w "%{http_code}" \
+        "$@")
   rc=$?
   set -e
   RESPONSE_BODY=$(cat "$tmpfile")
   rm -f "$tmpfile"
 
   # Restore the caller's xtrace setting.
-  (( _xtrace_enabled )) && set -x
+  if (( _xtrace_enabled )); then set -x; fi
 
   if (( rc != 0 )) || [[ -z "$RESPONSE_CODE" || "$RESPONSE_CODE" == "000" ]]; then
     echo "ERROR: could not reach the Boomi API -- network or connection failure (curl exit ${rc})." >&2

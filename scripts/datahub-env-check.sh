@@ -20,7 +20,7 @@ require_tools curl
 
 echo "=== Platform API (required) ==="
 for v in BOOMI_USERNAME BOOMI_API_TOKEN BOOMI_ACCOUNT_ID BOOMI_API_URL; do
-  [[ -n "${!v:-}" ]] && echo "  $v=SET" || echo "  $v=UNSET"
+  if var_is_set "$v"; then echo "  $v=SET"; else echo "  $v=UNSET"; fi
 done
 
 url="$(datahub_platform_url "clouds")"
@@ -39,7 +39,7 @@ echo
 echo "=== Repository API (optional) ==="
 missing=0
 for v in DATAHUB_REPO_URI DATAHUB_REPO_USERNAME DATAHUB_REPO_AUTH_TOKEN; do
-  [[ -n "${!v:-}" ]] && echo "  $v=SET" || { echo "  $v=UNSET"; missing=1; }
+  if var_is_set "$v"; then echo "  $v=SET"; else echo "  $v=UNSET"; missing=1; fi
 done
 if (( missing )); then
   echo "  Set the three keys above to enable Repository API sub-commands"
