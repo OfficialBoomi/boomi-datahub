@@ -1,15 +1,15 @@
 ---
 name: boomi-datahub
-description: Designs and operates Boomi Data Hub master data — model and source design, deployment lifecycle, quarantine triage, and golden-record CRUD — when the user works with Boomi Data Hub (MDM) configuration or stewardship. Pairs nicely with the boomi-integration skill.
+description: Designs and operates Boomi Data Hub master data — model and source design, data quality steps (also called data quality rules), deployment lifecycle, quarantine triage, and golden-record CRUD — when the user works with Boomi Data Hub (MDM) configuration or stewardship. Pairs nicely with the boomi-integration skill.
 ---
 
 # boomi-datahub
 
 ## Scope
 
-In: model design; source configuration; model lifecycle (Draft → Published → Deployed); quarantine triage; repository operations; golden-record CRUD.
+In: model design; source configuration; data quality steps; model lifecycle (Draft → Published → Deployed); quarantine triage; repository operations; golden-record CRUD.
 
-Out: building Boomi integration processes — those belong to `boomi-integration`. Integration processes that interact with Data Hub (typically via the REST client) are `boomi-integration`'s territory; the REST client connection itself can be bootstrapped from this workspace's `.env` via `datahub-connection.sh bootstrap`.
+Out: building Boomi integration processes — those belong to `boomi-integration`. Integration processes that interact with Data Hub are `boomi-integration`'s territory; the connection they need — a REST client on the repository API, or the Boomi Data Hub connector's own — can be bootstrapped from this workspace's `.env` via `datahub-connection.sh bootstrap`.
 
 ## API surfaces
 
@@ -205,6 +205,26 @@ If this instruction remains in the skill the defect has not yet been resolved an
 
 These configurations are niche, but if you encounter any of the above situations — STOP and raise it with the user.
 
+## Data quality steps
+
+`<mdm:dataQualitySteps>` holds `<mdm:step>` children that gate ingestion. A failing entity quarantines with `cause=ENRICH_ERROR` (see § Quarantine) instead of becoming a golden record. Steps are additive and ordered.
+
+`type` takes exactly two values; a step carrying neither is an ordinary quality service:
+
+| Kind | `type` | Authorable through the API |
+|---|---|---|
+| Business rule | `BUSINESS_RULE` | Yes — rule lives in the model XML, reusing § Tags' `<mdm:businessRule>` structure plus `<mdm:errorMessage>` |
+| Integration process call | `PROCESS` | Yes — the process must be a deployed Hub listener |
+| Ordinary — D&B or Loqate quality service | *absent* | No — UI only |
+
+**A model carrying an ordinary step cannot be updated through the API at all.** Any update submitting that step is rejected (`Missing required properties for data quality step <name>`), so every edit to such a model — fields, sources, match rules, tags — has to happen in the UI. Run `quality-steps` before planning a model edit; a `<mdm:step>` with no `type` means stop and route the user to the UI.
+
+**Deploy activates a step, not publish.** A step has no effect until its model version is republished *and* redeployed.
+
+`datahub-model.sh quality-steps` prints the block; `add-quality-step` and `remove-quality-step` edit it. Writes always produce a draft, so every edit after the first needs `--draft`.
+
+Full shapes and per-kind failure modes: `references/data_quality_step.md`.
+
 ## Quarantine
 
 Failed ingests do not enter golden state. They land in quarantine with one of these causes:
@@ -216,6 +236,9 @@ Failed ingests do not enter golden state. They land in quarantine with one of th
 | `REQUIRED_FIELD` | Missing `required="true"` fields | `delete`; fix payload, resubmit |
 | `REFERENCE_UNKNOWN` | A `REFERENCE` value doesn't resolve (when `incomingReferenceIntegrity="true"`) | `delete`; fix payload, resubmit |
 | `POSSIBLE_DUPLICATE` | Match rules flagged a possible duplicate of an existing golden record | `reject` — discards the record, no merge |
+| `ENRICH_ERROR` | An entity failed a data quality step (see § Data quality steps) | `delete`; fix the payload or rule, resend from source. Not approvable or rejectable. UI-only Retry / Ignore exist while the deployed version is unchanged |
+
+`ENRICH_ERROR`'s `<reason>` is `At data quality step '<step name>': <errorMessage>`.
 
 `approve` only works on entries quarantined by a source's manual-approval settings; against any other cause it returns HTTP 400. Excessive quarantine entries mean the match rules need work, not the runtime.
 
@@ -234,6 +257,13 @@ UTF8MB4 encoding makes STRING fields expensive (4 bytes/char), and each ENUMERAT
 - Verify by running `bash <skill-path>/scripts/datahub-env-check.sh` from a workspace with `.env`.
 - Treat `<skill-path>` as a fixed value for the session.
 
+## References
+
+```
+references/
+└── data_quality_step.md   # Use when: authoring, inspecting, or troubleshooting a model's data quality steps — business rule shape, quality-service and Integration process kinds, activation, ENRICH_ERROR triage
+```
+
 ## Scripts inventory
 
 All scripts support `--help` (or run with no args) for usage. They emit text (JSON or XML) to stdout and errors to stderr.
@@ -246,13 +276,13 @@ All scripts support `--help` (or run with no args) for usage. They emit text (JS
 
 - `scripts/datahub-common.sh` — sourced helper library.
 - `scripts/datahub-env-check.sh` — verify `.env` and reach the Platform API.
-- `scripts/datahub-model.sh` — `list | get | pull | create | update | delete | publish`
+- `scripts/datahub-model.sh` — `list | get | pull | quality-steps | add-quality-step | remove-quality-step | create | update | delete | publish`
 - `scripts/datahub-source.sh` — `list | get | pull | status | enable-initial-load | finish-initial-load | create | update | delete`
 - `scripts/datahub-repository.sh` — `list | get [--universe <id>] | status | clouds | create` (`get --universe` scopes the response to one universe's summary within the repo)
 - `scripts/datahub-deployment.sh` — `deploy | undeploy | status | list`
 - `scripts/datahub-quarantine.sh` — `query | get | approve | reject | delete`
 - `scripts/datahub-golden-record.sh` — `query | get | history | meta | match | update | unlink | get-by-source`
-- `scripts/datahub-connection.sh` — `bootstrap` (creates a Boomi REST client connection wired to this workspace's Data Hub creds, for use in integration processes). The stored base URL is the Hub Cloud host — integration paths must include the `/mdm/` prefix (e.g. `/mdm/universes/<id>/records`).
+- `scripts/datahub-connection.sh` — `bootstrap <rest|connector>` (creates a connection wired to this workspace's Data Hub creds, for use in integration processes). The two kinds are not interchangeable; `--help` covers which to pick and the `/mdm/` path prefix the `rest` kind needs.
 
 Repository API sub-commands take `--universe <id>` and read `DATAHUB_REPO_*` from `.env`.
 

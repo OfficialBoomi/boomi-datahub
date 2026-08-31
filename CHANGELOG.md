@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.11
+
+- Add `quality-steps`, `add-quality-step`, and `remove-quality-step` to `datahub-model.sh`; edits land as a draft and refuse to discard an existing one
+- Add `references/data_quality_step.md` covering all three data quality step kinds, the `ENRICH_ERROR` quarantine cause, and that deploy — not publish — activates a step
+- Document that a model carrying an ordinary quality-service step cannot be updated through the API at all
+
+
+## 0.2.10
+
+- Resolve the workspace `.env` explicitly so `source` cannot load one from `$PATH`
+
+
+## 0.2.9
+
+- Added the ability to bootstrap a Data Hub connector connection
+
+
 ## 0.2.8
 
 - Keep credentials off the command line

@@ -16,7 +16,8 @@ load_env() {
   local _xtrace_enabled=0
   case $- in *x*) _xtrace_enabled=1 ;; esac
   set +x
-  source "$env_file"
+  # Leading ./ is required: source searches $PATH for a name containing no slash.
+  source "./$env_file"
   if (( _xtrace_enabled )); then set -x; fi
   _set_user_agent   # .env must not override the header
 }
