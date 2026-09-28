@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.12
+
+- Add `enddate`, `enddate-bulk`, `restore`, and `query-enddated` to `datahub-golden-record.sh`
+- Document the two end-dating mechanisms and how each is attributed
+- Document the one-way `op="DELETE"` batch failure mode and `RECORD_ALREADY_ENDDATED`
+- Document the `enddate` / `endDate` timestamp format split
+- Fix `datahub-repository.sh get --universe <id>` consuming the flag as the repository id
+- Fix `datahub-golden-record.sh` aborting with a raw interpreter error when `--universe` or `--source` is given without a value
+- Fix Repository-API-only workspaces aborting on an unset `BOOMI_USERNAME`; each auth path now requires only its own credentials
+
+
 ## 0.2.11
 
 - Add `quality-steps`, `add-quality-step`, and `remove-quality-step` to `datahub-model.sh`; edits land as a draft and refuse to discard an existing one

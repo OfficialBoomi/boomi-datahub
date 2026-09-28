@@ -1,13 +1,13 @@
 ---
 name: boomi-datahub
-description: Designs and operates Boomi Data Hub master data — model and source design, data quality steps (also called data quality rules), deployment lifecycle, quarantine triage, and golden-record CRUD — when the user works with Boomi Data Hub (MDM) configuration or stewardship. Pairs nicely with the boomi-integration skill.
+description: Designs and operates Boomi Data Hub master data — model and source design, data quality steps (also called data quality rules), deployment lifecycle, quarantine triage, and golden-record CRUD including end-dating (soft delete), restore, and un-delete — when the user works with Boomi Data Hub (MDM) configuration or stewardship. Purge (permanent deletion) is out of scope. Pairs nicely with the boomi-integration skill.
 ---
 
 # boomi-datahub
 
 ## Scope
 
-In: model design; source configuration; data quality steps; model lifecycle (Draft → Published → Deployed); quarantine triage; repository operations; golden-record CRUD.
+In: model design; source configuration; data quality steps; model lifecycle (Draft → Published → Deployed); quarantine triage; repository operations; golden-record CRUD, end-dating, and restore.
 
 Out: building Boomi integration processes — those belong to `boomi-integration`. Integration processes that interact with Data Hub are `boomi-integration`'s territory; the connection they need — a REST client on the repository API, or the Boomi Data Hub connector's own — can be bootstrapped from this workspace's `.env` via `datahub-connection.sh bootstrap`.
 
@@ -225,6 +225,43 @@ These configurations are niche, but if you encounter any of the above situations
 
 Full shapes and per-kind failure modes: `references/data_quality_step.md`.
 
+## End-dating and restore
+
+Soft deletion: the record leaves the active set but keeps fields, history, and source links, and can be restored. Purge (permanent) is out of scope.
+
+**`query` returns active records only** — an end-dated record yields `<RecordQueryResponse resultCount="0" totalCount="0"/>`, identical to a filter matching nothing. `totalCount` counts active only. Use `query-enddated` (same `RecordQueryRequest` body). `get`, `meta`, `history`, `get-by-source` still return end-dated records in full.
+
+| Mechanism | Command | `history` `enddatesource` |
+|---|---|---|
+| Direct | `enddate` / `enddate-bulk` | `*MDM*` |
+| Source-driven | `update` batch, `op="DELETE"` on entity root | contributing source id |
+
+`enddate-bulk` takes `<RecordEndDateRequest>` in two forms that behave differently:
+
+| Form | Status | Body |
+|---|---|---|
+| ≤100 `<recordId>` | 200 | one `<result>` per record; `<message>` only when `<success>false</success>` |
+| `<filter>` | 202 | **empty** — applied asynchronously, seconds later |
+
+Over 100 ids → HTTP 400 `Cannot end-date more than 100 records at one time.`; the count is checked before the ids are validated, and unknown ids fail per-record rather than failing the batch. **The filter form's 202 is acceptance, not completion** — it returns nothing to confirm against, and acceptance does not guarantee application. Always verify with `query` / `query-enddated`.
+
+**Source-driven end-dating is one-way for the source.** Resending the entity returns HTTP 202 and quarantines `RECORD_ALREADY_ENDDATED` (`approve` → HTTP 400). A pipeline that doesn't poll quarantine looks healthy while dropping every later record for that entity. `restore` reverses the end-date but does not resolve the entry — it stays ACTIVE until the source resends, and that resend then incorporates normally (`<resolution>INCORPORATE_SUCCESS</resolution>`).
+
+`op="DELETE"` is positional — on the **entity root** it end-dates the record and skips field validation (`<id>` alone is accepted despite `required="true"` fields); on a collection **item** element (the `fieldGroup` name, e.g. `<phone>`) it removes just that item; on the **`collectionTag`** wrapper (e.g. `<phones>`) it is rejected — `PARSE_FAILURE`, `Attribute 'op' is not allowed to appear in element '…'`.
+
+**Restore is keyed on the source entity, not the record id** — `restore --source <source-id> <entity-id>`, both from `meta`'s `<link>`. Empty body on success. Record id, `createdDate`, and `establishedDate` survive; restore adds a history version rather than rewriting the end-dated one.
+
+### End-date timestamp: two formats
+
+| Surface | Attribute | Example |
+|---|---|---|
+| `meta` | `endDate` | `2026-08-18T17:17:17Z` (ISO-8601 UTC) |
+| `get`, `history`, `get-by-source` | `enddate` | `08-18-2026T12:17:17.000-0500` (MM-DD-YYYY, local offset) |
+
+Names differ by casing alone. The `get` form has a `T` but is month-first, not ISO-8601 — misparses silently when the day is ≤12. Absence of the attribute is the state flag; restore removes it, never blanks it. Origin timestamp is `startdate` in `history`, `createddate` in `get`, `createdDate` in `query`/`meta`.
+
+**Repository summary counters never recover.** `datahub-repository.sh get <repository-id> --universe <id>` decrements on an end-date but does not increment on a restore, so the error accumulates one record per cycle and does not self-correct. `query` + `query-enddated` are authoritative.
+
 ## Quarantine
 
 Failed ingests do not enter golden state. They land in quarantine with one of these causes:
@@ -237,10 +274,18 @@ Failed ingests do not enter golden state. They land in quarantine with one of th
 | `REFERENCE_UNKNOWN` | A `REFERENCE` value doesn't resolve (when `incomingReferenceIntegrity="true"`) | `delete`; fix payload, resubmit |
 | `POSSIBLE_DUPLICATE` | Match rules flagged a possible duplicate of an existing golden record | `reject` — discards the record, no merge |
 | `ENRICH_ERROR` | An entity failed a data quality step (see § Data quality steps) | `delete`; fix the payload or rule, resend from source. Not approvable or rejectable. UI-only Retry / Ignore exist while the deployed version is unchanged |
+| `RECORD_ALREADY_ENDDATED` | A source re-sent an entity whose golden record is end-dated | `datahub-golden-record.sh restore` (see § End-dating), then resend — restore alone leaves the entry ACTIVE; or `delete` to keep the record end-dated |
+| `REQUIRES_END_DATE_APPROVAL` | A source with `endDateApproval required="true"` sent `op="DELETE"` | `approve` — end-dates the record, attributed to that source |
 
 `ENRICH_ERROR`'s `<reason>` is `At data quality step '<step name>': <errorMessage>`.
 
 `approve` only works on entries quarantined by a source's manual-approval settings; against any other cause it returns HTTP 400. Excessive quarantine entries mean the match rules need work, not the runtime.
+
+**`delete` resolves, does not remove.** Returns `<mdm:success>true</mdm:success>` and drops from `type="ACTIVE"`, but `type="ALL"` still lists it as `<resolution>USER_IGNORE</resolution>`. A second `delete` → HTTP 404. Resolution is permanent.
+
+**Newer entries supersede older ones per `sourceEntityId`** (`<resolution>SUPERSEDED</resolution>`); only the newest stays ACTIVE.
+
+**`endDate` on a quarantine entry means "resolved at"**, not soft-deleted.
 
 ## Size limits
 
@@ -278,10 +323,10 @@ All scripts support `--help` (or run with no args) for usage. They emit text (JS
 - `scripts/datahub-env-check.sh` — verify `.env` and reach the Platform API.
 - `scripts/datahub-model.sh` — `list | get | pull | quality-steps | add-quality-step | remove-quality-step | create | update | delete | publish`
 - `scripts/datahub-source.sh` — `list | get | pull | status | enable-initial-load | finish-initial-load | create | update | delete`
-- `scripts/datahub-repository.sh` — `list | get [--universe <id>] | status | clouds | create` (`get --universe` scopes the response to one universe's summary within the repo)
+- `scripts/datahub-repository.sh` — `list | get <repository-id> [--universe <id>] | status | clouds | create` (`--universe` scopes the response to one universe's summary within the repo)
 - `scripts/datahub-deployment.sh` — `deploy | undeploy | status | list`
 - `scripts/datahub-quarantine.sh` — `query | get | approve | reject | delete`
-- `scripts/datahub-golden-record.sh` — `query | get | history | meta | match | update | unlink | get-by-source`
+- `scripts/datahub-golden-record.sh` — `query | query-enddated | get | history | meta | match | update | enddate | enddate-bulk | restore | unlink | get-by-source`
 - `scripts/datahub-connection.sh` — `bootstrap <rest|connector>` (creates a connection wired to this workspace's Data Hub creds, for use in integration processes). The two kinds are not interchangeable; `--help` covers which to pick and the `/mdm/` path prefix the `rest` kind needs.
 
 Repository API sub-commands take `--universe <id>` and read `DATAHUB_REPO_*` from `.env`.
@@ -392,6 +437,30 @@ The `src` attribute is a configured contributing source. `<id>` is the source-si
         <id>2</id>
         <name>Carol Jones</name>
         <city>Boston</city>
+    </contact>
+</batch>
+```
+
+### `RecordEndDateRequest` — `datahub-golden-record.sh enddate-bulk`
+
+≤100 `<recordId>`, or a `<filter>` using `RecordQueryRequest`'s children — the two forms return differently, see § End-dating and restore. Single record: use `enddate <record-id>` (no body).
+
+```xml
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<RecordEndDateRequest>
+    <recordId>aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee</recordId>
+</RecordEndDateRequest>
+```
+
+### Source-driven end-date — `datahub-golden-record.sh update`
+
+`op="DELETE"` on the entity root end-dates the linked golden record. `<id>` is the source-side entity id (`meta`'s `<link entityId="...">`) and the only required element. HTTP 202. One-way — see § End-dating and restore.
+
+```xml
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<batch src="MANUAL">
+    <contact op="DELETE">
+        <id>1</id>
     </contact>
 </batch>
 ```

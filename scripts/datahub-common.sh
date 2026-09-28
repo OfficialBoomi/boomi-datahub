@@ -134,12 +134,18 @@ datahub_api() {
   case $- in *x*) _xtrace_enabled=1 ;; esac
   set +x
 
-  local userpass="BOOMI_TOKEN.${BOOMI_USERNAME}:${BOOMI_API_TOKEN}"
+  # Each path demands only its own creds: a Repository-API-only workspace sets
+  # DATAHUB_REPO_* alone, and an unconditional BOOMI_* expansion aborts it under set -u.
+  local userpass
   if [[ "${1:-}" == "--repo-auth" ]]; then
     : "${DATAHUB_REPO_USERNAME:?DATAHUB_REPO_USERNAME must be set in .env}"
     : "${DATAHUB_REPO_AUTH_TOKEN:?DATAHUB_REPO_AUTH_TOKEN must be set in .env}"
     userpass="${DATAHUB_REPO_USERNAME}:${DATAHUB_REPO_AUTH_TOKEN}"
     shift
+  else
+    : "${BOOMI_USERNAME:?BOOMI_USERNAME must be set in .env}"
+    : "${BOOMI_API_TOKEN:?BOOMI_API_TOKEN must be set in .env}"
+    userpass="BOOMI_TOKEN.${BOOMI_USERNAME}:${BOOMI_API_TOKEN}"
   fi
 
   local ssl_flag=""

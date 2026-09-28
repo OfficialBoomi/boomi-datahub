@@ -33,9 +33,14 @@ case "$sub" in
     ;;
   get)
     [[ -z "${1:-}" ]] && { echo "Need <repository-id>" >&2; exit 1; }
+    # Reject a flag in the repo-id slot.
+    [[ "$1" == -* ]] && { echo "Need <repository-id> before $1" >&2; exit 1; }
     repo_id="$1"; shift
     universe_id=""
-    [[ "${1:-}" == "--universe" ]] && { universe_id="$2"; shift 2; }
+    if [[ "${1:-}" == "--universe" ]]; then
+      [[ -z "${2:-}" ]] && { echo "Need <universe-id> after --universe" >&2; exit 1; }
+      universe_id="$2"; shift 2
+    fi
     if [[ -n "$universe_id" ]]; then
       datahub_api -H "Accept: application/json" "$(datahub_platform_url "repositories/${repo_id}/universes/${universe_id}")"
     else
