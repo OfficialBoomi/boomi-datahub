@@ -25,8 +25,3 @@ Found a bug or have a feature idea? Email developer-offerings@boomi.com with a c
 | `DATAHUB_REPO_AUTH_TOKEN` | Repository API | Hub Authentication Token from the repository's **Configure** tab |
 
 Setting the Repository API keys allows the agent to see and modify Golden Record and Quarantine content. Only provide those credentials if you want to grant that capability.
-
-Allowlist the skill and its scripts in the workspace's `.claude/settings.json` under `permissions.allow`:
-
-- `Skill(bc-datahub:boomi-datahub)`
-- `Bash(bash */skills/boomi-datahub/scripts/*)`

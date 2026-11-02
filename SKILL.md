@@ -313,7 +313,7 @@ references/
 
 All scripts support `--help` (or run with no args) for usage. They emit text (JSON or XML) to stdout and errors to stderr.
 
-**Pipeline discipline.** Pipe script output only to standard text filters (`head`, `tail`, `wc`, `grep`). Do **not** pipe to `python3 -c`, `jq -r`, `awk`, or other interpreters with inline code — the Claude Code harness treats each piped executable as a separate trust boundary and prompts for approval per pipe, defeating the point of allowlisting the scripts. If you need a transformation an existing script doesn't provide, surface the request rather than work around it inline — it'll be added to the appropriate CLI tool.
+**Pipeline discipline.** Pipe script output only to standard text filters (`head`, `tail`, `wc`, `grep`). Do **not** pipe to `python3 -c`, `jq -r`, `awk`, or other interpreters with inline code — some agent harnesses treat each piped executable as a separate trust boundary and prompt for approval per pipe, defeating the point of allowlisting the scripts. If you need a transformation an existing script doesn't provide, surface the request rather than work around it inline — it'll be added to the appropriate CLI tool.
 
 **Temp files stay in the project tree.** When you need a scratch file (XML query body, batch payload, etc.) to pass to a script, write it under `active-development/feedback/` (following bc-integration's working-files paradigm) — not `/tmp/`. The harness prompts for approval on writes outside the project tree, including `/tmp/`.
 

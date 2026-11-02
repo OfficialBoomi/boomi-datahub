@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.14
+
+- Remove Claude Code permissions allowlist note from READMEs
+
+
+## 0.2.13
+
+- Make the skill docs agent-neutral and stop tracking maintainer `CLAUDE.md` files
+
+
 ## 0.2.12
 
 - Add `enddate`, `enddate-bulk`, `restore`, and `query-enddated` to `datahub-golden-record.sh`
